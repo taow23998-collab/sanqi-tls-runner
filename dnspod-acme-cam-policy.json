@@ -1,0 +1,17 @@
+{
+  "version": "2.0",
+  "statement": [
+    {
+      "effect": "allow",
+      "action": [
+        "dnspod:DescribeRecordFilterList",
+        "dnspod:DescribeRecordList",
+        "dnspod:CreateRecord",
+        "dnspod:DeleteRecord"
+      ],
+      "resource": [
+        "*"
+      ]
+    }
+  ]
+}

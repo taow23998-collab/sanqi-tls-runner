@@ -1,0 +1,98 @@
+name: wildcard-production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanqi-wildcard-production
+  cancel-in-progress: false
+
+jobs:
+  issue-and-deploy:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      ROOT_DOMAIN: 37psychology.cn
+      ACME_SERVER: https://acme-v02.api.letsencrypt.org/directory
+      ACME_COMMIT: 3661fd86b6304115e42f43910e6dd452ab9866d6
+      Tencent_SecretId: ${{ secrets.TENCENT_SECRET_ID }}
+      Tencent_SecretKey: ${{ secrets.TENCENT_SECRET_KEY }}
+      SMA_TLS_DEPLOY_SSH_KEY: ${{ secrets.SMA_TLS_DEPLOY_SSH_KEY }}
+      SMA_TLS_DEPLOY_KNOWN_HOSTS: ${{ secrets.SMA_TLS_DEPLOY_KNOWN_HOSTS }}
+
+    steps:
+      - name: Checkout pinned workflow source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in Tencent_SecretId Tencent_SecretKey SMA_TLS_DEPLOY_SSH_KEY SMA_TLS_DEPLOY_KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || {
+              echo "::error::Required Repository Secret is missing: $name"
+              exit 1
+            }
+          done
+
+      - name: Issue Let's Encrypt production wildcard certificate
+        shell: bash
+        env:
+          WORK_ROOT: ${{ runner.temp }}/sanqi-tls-production
+        run: |
+          set -euo pipefail
+          chmod +x scripts/issue-wildcard.sh
+          scripts/issue-wildcard.sh
+
+      - name: Prepare pinned SSH identity
+        id: ssh
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_dir="$RUNNER_TEMP/sanqi-ssh"
+          install -d -m 0700 "$ssh_dir"
+          printf '%s\n' "$SMA_TLS_DEPLOY_SSH_KEY" >"$ssh_dir/id_ed25519"
+          printf '%s\n' "$SMA_TLS_DEPLOY_KNOWN_HOSTS" >"$ssh_dir/known_hosts"
+          chmod 0600 "$ssh_dir/id_ed25519" "$ssh_dir/known_hosts"
+          ssh-keygen -y -f "$ssh_dir/id_ed25519" >/dev/null
+
+          endpoint="$(awk 'NF >= 3 && $1 ~ /^\[[^]]+\]:[0-9]+$/ { print $1; exit }' "$ssh_dir/known_hosts")"
+          [[ -n "$endpoint" ]] || {
+            echo "::error::SMA_TLS_DEPLOY_KNOWN_HOSTS must contain [host]:port ssh-ed25519 key"
+            exit 1
+          }
+          host="${endpoint#\[}"
+          host="${host%%\]:*}"
+          port="${endpoint##*:}"
+          [[ -n "$host" && "$port" =~ ^[0-9]+$ ]] || exit 1
+
+          echo "ssh_dir=$ssh_dir" >>"$GITHUB_OUTPUT"
+          echo "host=$host" >>"$GITHUB_OUTPUT"
+          echo "port=$port" >>"$GITHUB_OUTPUT"
+
+      - name: Deploy certificate through restricted SSH command
+        shell: bash
+        env:
+          WORK_ROOT: ${{ runner.temp }}/sanqi-tls-production
+          SSH_DIR: ${{ steps.ssh.outputs.ssh_dir }}
+          DEPLOY_HOST: ${{ steps.ssh.outputs.host }}
+          DEPLOY_PORT: ${{ steps.ssh.outputs.port }}
+        run: |
+          set -euo pipefail
+          output="$WORK_ROOT/output"
+          key="$output/wildcard-$ROOT_DOMAIN.key"
+          chain="$output/wildcard-$ROOT_DOMAIN.fullchain.pem"
+          [[ -f "$key" && -f "$chain" ]]
+
+          tar -C "$output" -czf -             "wildcard-$ROOT_DOMAIN.key"             "wildcard-$ROOT_DOMAIN.fullchain.pem" |
+          ssh             -o BatchMode=yes             -o IdentitiesOnly=yes             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$SSH_DIR/known_hosts"             -o ConnectTimeout=15             -i "$SSH_DIR/id_ed25519"             -p "$DEPLOY_PORT"             sanqi-tls-deploy@"$DEPLOY_HOST"
+
+      - name: Clean ephemeral certificate and SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/sanqi-tls-production" "$RUNNER_TEMP/sanqi-ssh"
+          echo "Production private key and SSH client key were removed from the ephemeral runner."

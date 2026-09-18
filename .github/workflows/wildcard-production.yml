@@ -67,24 +67,31 @@ jobs:
           chain="$output/wildcard-$ROOT_DOMAIN.fullchain.pem"
           [[ -f "$key" && -f "$chain" ]]
 
-          tar -C "$output" -czf "$package_dir/payload.tar.gz"             "wildcard-$ROOT_DOMAIN.key"             "wildcard-$ROOT_DOMAIN.fullchain.pem"
+          tar -C "$output" -czf "$package_dir/payload.tar.gz" \
+            "wildcard-$ROOT_DOMAIN.key" \
+            "wildcard-$ROOT_DOMAIN.fullchain.pem"
 
           printf '%s' "$SMA_TLS_PACKAGE_PASSPHRASE" >"$package_dir/passphrase"
           chmod 0600 "$package_dir/passphrase"
 
-          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -md sha256             -in "$package_dir/payload.tar.gz"             -out "$package_dir/sanqi-tls-production.tar.gz.enc"             -pass file:"$package_dir/passphrase"
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -md sha256 \
+            -in "$package_dir/payload.tar.gz" \
+            -out "$package_dir/sanqi-tls-production.tar.gz.enc" \
+            -pass file:"$package_dir/passphrase"
 
           rm -f "$package_dir/payload.tar.gz" "$package_dir/passphrase"
 
           test -s "$package_dir/sanqi-tls-production.tar.gz.enc"
-          sha256sum "$package_dir/sanqi-tls-production.tar.gz.enc"             >"$package_dir/sanqi-tls-production.tar.gz.enc.sha256"
+          sha256sum "$package_dir/sanqi-tls-production.tar.gz.enc" \
+            >"$package_dir/sanqi-tls-production.tar.gz.enc.sha256"
 
-          cat >"$package_dir/INSTALL.txt" <<'EOF'
-This artifact contains an encrypted Sanqi TLS production certificate package.
-It does NOT contain the decryption passphrase.
-Copy sanqi-tls-production.tar.gz.enc to the SMA server, then decrypt and install
-using the server-side passphrase file and /usr/local/sbin/sanqi-tls-receive.
-EOF
+          printf '%s\n' \
+            'Encrypted Sanqi TLS production certificate package.' \
+            'The decryption passphrase is NOT stored in this artifact.' \
+            'Copy sanqi-tls-production.tar.gz.enc to the SMA server.' \
+            'Decrypt on the server, then pipe the plaintext tar.gz into:' \
+            '/usr/local/sbin/sanqi-tls-receive' \
+            >"$package_dir/INSTALL.txt"
 
           echo "ENCRYPTED_TLS_PACKAGE=PASS"
 

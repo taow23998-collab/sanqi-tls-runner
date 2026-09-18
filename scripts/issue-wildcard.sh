@@ -52,7 +52,12 @@ ACME_BIN="${ACME_HOME}/acme.sh"
   --home "${ACME_HOME}" \
   --config-home "${ACME_CONFIG_HOME}"
 
-echo "Issuing staging wildcard certificate for ${ROOT_DOMAIN} and *.${ROOT_DOMAIN}"
+if [[ "${ACME_SERVER}" == *"staging"* ]]; then
+  cert_mode="staging"
+else
+  cert_mode="production"
+fi
+echo "Issuing ${cert_mode} wildcard certificate for ${ROOT_DOMAIN} and *.${ROOT_DOMAIN}"
 echo "Pinned acme.sh commit: ${ACME_COMMIT}"
 
 "${ACME_BIN}" --issue \
@@ -79,4 +84,4 @@ openssl x509 -in "${CERT_CHAIN}" -noout -subject -issuer -dates
 openssl x509 -in "${CERT_CHAIN}" -checkhost "${ROOT_DOMAIN}" -noout
 openssl x509 -in "${CERT_CHAIN}" -checkhost "sma.${ROOT_DOMAIN}" -noout
 
-echo "STAGING_WILDCARD_ISSUANCE=PASS"
+echo "${cert_mode^^}_WILDCARD_ISSUANCE=PASS"

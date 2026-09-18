@@ -54,10 +54,17 @@ jobs:
           set -euo pipefail
           ssh_dir="$RUNNER_TEMP/sanqi-ssh"
           install -d -m 0700 "$ssh_dir"
-          printf '%s\n' "$SMA_TLS_DEPLOY_SSH_KEY" >"$ssh_dir/id_ed25519"
-          printf '%s\n' "$SMA_TLS_DEPLOY_KNOWN_HOSTS" >"$ssh_dir/known_hosts"
+
+          # Repository Secrets may arrive with CRLF after copying through Windows/browser.
+          # Normalize CRLF before OpenSSH parses the key and known_hosts entry.
+          printf '%s\n' "$SMA_TLS_DEPLOY_SSH_KEY" | tr -d '\r' >"$ssh_dir/id_ed25519"
+          printf '%s\n' "$SMA_TLS_DEPLOY_KNOWN_HOSTS" | tr -d '\r' >"$ssh_dir/known_hosts"
           chmod 0600 "$ssh_dir/id_ed25519" "$ssh_dir/known_hosts"
-          ssh-keygen -y -f "$ssh_dir/id_ed25519" >/dev/null
+
+          if ! ssh-keygen -y -f "$ssh_dir/id_ed25519" >/dev/null 2>&1; then
+            echo "::error::SMA_TLS_DEPLOY_SSH_KEY is not a valid OpenSSH private key after CRLF normalization."
+            exit 1
+          fi
 
           endpoint="$(awk 'NF >= 3 && $1 ~ /^\[[^]]+\]:[0-9]+$/ { print $1; exit }' "$ssh_dir/known_hosts")"
           [[ -n "$endpoint" ]] || {
@@ -87,8 +94,18 @@ jobs:
           chain="$output/wildcard-$ROOT_DOMAIN.fullchain.pem"
           [[ -f "$key" && -f "$chain" ]]
 
-          tar -C "$output" -czf -             "wildcard-$ROOT_DOMAIN.key"             "wildcard-$ROOT_DOMAIN.fullchain.pem" |
-          ssh             -o BatchMode=yes             -o IdentitiesOnly=yes             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$SSH_DIR/known_hosts"             -o ConnectTimeout=15             -i "$SSH_DIR/id_ed25519"             -p "$DEPLOY_PORT"             sanqi-tls-deploy@"$DEPLOY_HOST"
+          tar -C "$output" -czf - \
+            "wildcard-$ROOT_DOMAIN.key" \
+            "wildcard-$ROOT_DOMAIN.fullchain.pem" |
+          ssh \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts" \
+            -o ConnectTimeout=15 \
+            -i "$SSH_DIR/id_ed25519" \
+            -p "$DEPLOY_PORT" \
+            sanqi-tls-deploy@"$DEPLOY_HOST"
 
       - name: Clean ephemeral certificate and SSH material
         if: always()

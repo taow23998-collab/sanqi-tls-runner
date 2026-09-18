@@ -2,11 +2,7 @@
 
 Minimal public GitHub Actions runner for the Sanqi wildcard TLS certificate.
 
-## Scope
-
-This repository contains **no SMA application source code, business data, server passwords, root SSH private keys, or user information**.
-
-It provides:
+## Current architecture
 
 ```text
 Let's Encrypt
@@ -15,85 +11,95 @@ Tencent DNSPod DNS-01
 ↓
 37psychology.cn + *.37psychology.cn
 ↓
-restricted certificate-only SSH deployment
+encrypted short-lived GitHub artifact
+↓
+administrator downloads artifact
+↓
+SCP from trusted local Windows PC
+↓
+SMA server decrypts locally
+↓
+/usr/local/sbin/sanqi-tls-receive validates and installs
 ```
 
 The SMA server itself does not contact Let's Encrypt and does not store DNSPod API credentials.
 
 ## Verified status
 
-Let's Encrypt **Staging DNS-01 has passed** for both:
+Completed successfully:
 
-- `37psychology.cn`
-- `*.37psychology.cn`
+- free GitHub-hosted Ubuntu runner;
+- Let's Encrypt Staging DNS-01;
+- Let's Encrypt Production DNS-01;
+- root domain and wildcard hostname validation;
+- DNSPod TXT create / verify / cleanup;
+- Base64 SSH deploy identity validation.
 
-The test confirmed TXT creation, validation, TXT cleanup, certificate issuance, hostname validation, and ephemeral private-key cleanup.
+Direct GitHub-hosted-runner SSH to the SMA server was abandoned because the overseas runner timed out connecting to the server's public SSH NAT port. The production certificate package therefore uses encrypted artifact handoff instead.
 
 ## Security model
 
 - No `pull_request` workflow uses Repository Secrets.
 - `actions/checkout` is pinned to an exact commit.
+- `actions/upload-artifact` is pinned to an exact commit.
 - `acme.sh 3.1.4` is pinned to exact upstream commit `3661fd86b6304115e42f43910e6dd452ab9866d6`.
-- No certificate/private-key artifact is uploaded.
-- Staging and Production private keys exist only on the ephemeral runner until Production is sent directly to the restricted server account.
-- Production does **not** use root SSH credentials.
-- The server deploy account is forced to one root-owned certificate receiver command and cannot obtain an interactive shell through the authorized deploy key.
-- The SSH host key is pinned through a Repository Secret; `StrictHostKeyChecking=yes` is enforced.
+- Production certificate/private key are encrypted before artifact upload.
+- The artifact does not contain the encryption passphrase.
+- Artifact retention is one day.
+- Plaintext certificate private key and passphrase files are deleted from the ephemeral runner after packaging.
+- The server validates certificate, hostname, issuer, key match, and nginx before installation.
 
-## Repository Secrets
-
-DNSPod:
+## Repository Secrets used by production packaging
 
 ```text
 TENCENT_SECRET_ID
 TENCENT_SECRET_KEY
+SMA_TLS_PACKAGE_PASSPHRASE
 ```
 
-After the restricted server deploy account is bootstrapped:
+The package passphrase is generated on the SMA server, stored root-only there, and copied once into GitHub Repository Secrets. Do not paste it into chat, commits, screenshots, or issues.
 
-```text
-SMA_TLS_DEPLOY_SSH_KEY
-SMA_TLS_DEPLOY_KNOWN_HOSTS
-```
-
-Do not paste secret values into commits, issues, chat, screenshots, or workflow YAML.
-
-## Workflows
-
-`.github/workflows/runner-smoke.yml`
-
-Validates scripts, confirms the free GitHub-hosted Ubuntu runner, and checks Let's Encrypt Staging reachability.
-
-`.github/workflows/wildcard-staging.yml`
-
-Performs the real Let's Encrypt Staging DNS-01 test. It never persists the resulting certificate.
+## Production workflow
 
 `.github/workflows/wildcard-production.yml`
 
-Manual-only. It:
+The workflow name displayed in Actions is:
 
-1. issues the real Let's Encrypt production wildcard certificate;
-2. validates the pinned restricted SSH identity and host key;
-3. pipes only the certificate package to `sanqi-tls-deploy`;
-4. relies on the server forced command to validate the certificate/key before installation;
-5. deletes all private material from the ephemeral runner.
+```text
+wildcard-production-package
+```
 
-It does not run until both deploy Repository Secrets exist.
+It is manual-only. Before contacting Let's Encrypt it validates that all required secrets exist and the package passphrase is at least 32 characters.
 
-## One-time server bootstrap
+After successful production issuance it creates:
 
-Run `server/bootstrap-restricted-deploy.sh` as root on the SMA server with its public SSH host and public SSH NAT port.
+```text
+sanqi-tls-production.tar.gz.enc
+sanqi-tls-production.tar.gz.enc.sha256
+INSTALL.txt
+```
 
-The script:
+inside a one-day encrypted artifact.
 
-- creates `sanqi-tls-deploy`;
-- installs a root-owned certificate receiver;
-- restricts the deploy SSH key to that receiver command;
-- generates a dedicated ED25519 client key;
-- writes the exact SSH known-hosts entry.
+## Server-side installation
 
-It then tells the administrator where to copy the two deploy secret values from. The temporary server copy of the client private key should be deleted after Production deployment succeeds.
+The existing root-owned receiver remains:
 
-## Renewal
+```text
+/usr/local/sbin/sanqi-tls-receive
+```
 
-Automatic scheduled Production renewal will be enabled only after the first manual Production issue/deploy run passes end to end.
+It validates and installs only:
+
+```text
+wildcard-37psychology.cn.key
+wildcard-37psychology.cn.fullchain.pem
+```
+
+into:
+
+```text
+/etc/sanqi/tls/
+```
+
+Automatic renewal can be designed later using a China-reachable relay or other trusted handoff. The immediate goal is to finish the first HTTPS deployment safely without exposing the TLS private key.

@@ -17,6 +17,16 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
+      - name: Checkout pinned workflow source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Validate repository scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/issue-wildcard.sh
+          bash -n server/bootstrap-restricted-deploy.sh
+
       - name: Confirm GitHub-hosted runner
         shell: bash
         run: |

@@ -1,0 +1,2 @@
+staging-trigger: 1
+purpose: Initial workflow recognition only. Real DNS-01 issuance requires both Repository Secrets.

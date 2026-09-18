@@ -20,7 +20,7 @@ jobs:
       ACME_COMMIT: 3661fd86b6304115e42f43910e6dd452ab9866d6
       Tencent_SecretId: ${{ secrets.TENCENT_SECRET_ID }}
       Tencent_SecretKey: ${{ secrets.TENCENT_SECRET_KEY }}
-      SMA_TLS_DEPLOY_SSH_KEY: ${{ secrets.SMA_TLS_DEPLOY_SSH_KEY }}
+      SMA_TLS_DEPLOY_SSH_KEY_B64: ${{ secrets.SMA_TLS_DEPLOY_SSH_KEY_B64 }}
       SMA_TLS_DEPLOY_KNOWN_HOSTS: ${{ secrets.SMA_TLS_DEPLOY_KNOWN_HOSTS }}
 
     steps:
@@ -31,23 +31,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in Tencent_SecretId Tencent_SecretKey SMA_TLS_DEPLOY_SSH_KEY SMA_TLS_DEPLOY_KNOWN_HOSTS; do
+          for name in Tencent_SecretId Tencent_SecretKey SMA_TLS_DEPLOY_SSH_KEY_B64 SMA_TLS_DEPLOY_KNOWN_HOSTS; do
             [[ -n "${!name}" ]] || {
               echo "::error::Required Repository Secret is missing: $name"
               exit 1
             }
           done
 
-      - name: Issue Let's Encrypt production wildcard certificate
-        shell: bash
-        env:
-          WORK_ROOT: ${{ runner.temp }}/sanqi-tls-production
-        run: |
-          set -euo pipefail
-          chmod +x scripts/issue-wildcard.sh
-          scripts/issue-wildcard.sh
-
-      - name: Prepare pinned SSH identity
+      - name: Prepare and validate pinned SSH identity
         id: ssh
         shell: bash
         run: |
@@ -55,14 +46,12 @@ jobs:
           ssh_dir="$RUNNER_TEMP/sanqi-ssh"
           install -d -m 0700 "$ssh_dir"
 
-          # Repository Secrets may arrive with CRLF after copying through Windows/browser.
-          # Normalize CRLF before OpenSSH parses the key and known_hosts entry.
-          printf '%s\n' "$SMA_TLS_DEPLOY_SSH_KEY" | tr -d '\r' >"$ssh_dir/id_ed25519"
+          printf '%s' "$SMA_TLS_DEPLOY_SSH_KEY_B64" | tr -d '\r\n ' | base64 --decode >"$ssh_dir/id_ed25519"
           printf '%s\n' "$SMA_TLS_DEPLOY_KNOWN_HOSTS" | tr -d '\r' >"$ssh_dir/known_hosts"
           chmod 0600 "$ssh_dir/id_ed25519" "$ssh_dir/known_hosts"
 
           if ! ssh-keygen -y -f "$ssh_dir/id_ed25519" >/dev/null 2>&1; then
-            echo "::error::SMA_TLS_DEPLOY_SSH_KEY is not a valid OpenSSH private key after CRLF normalization."
+            echo "::error::SMA_TLS_DEPLOY_SSH_KEY_B64 does not decode to a valid OpenSSH private key."
             exit 1
           fi
 
@@ -79,6 +68,16 @@ jobs:
           echo "ssh_dir=$ssh_dir" >>"$GITHUB_OUTPUT"
           echo "host=$host" >>"$GITHUB_OUTPUT"
           echo "port=$port" >>"$GITHUB_OUTPUT"
+          echo "SSH_DEPLOY_IDENTITY=PASS"
+
+      - name: Issue Let's Encrypt production wildcard certificate
+        shell: bash
+        env:
+          WORK_ROOT: ${{ runner.temp }}/sanqi-tls-production
+        run: |
+          set -euo pipefail
+          chmod +x scripts/issue-wildcard.sh
+          scripts/issue-wildcard.sh
 
       - name: Deploy certificate through restricted SSH command
         shell: bash

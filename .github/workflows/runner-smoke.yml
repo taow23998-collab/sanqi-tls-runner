@@ -1,0 +1,37 @@
+name: runner-smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanqi-tls-runner-smoke
+  cancel-in-progress: true
+
+jobs:
+  hosted-runner:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Confirm GitHub-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_ARCH=$RUNNER_ARCH"
+          uname -a
+
+      - name: Check Let's Encrypt staging reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 30 \
+            https://acme-staging-v02.api.letsencrypt.org/directory \
+            >/tmp/letsencrypt-staging-directory.json
+          grep -q '"newNonce"' /tmp/letsencrypt-staging-directory.json
+          echo "PUBLIC_HOSTED_RUNNER=PASS"

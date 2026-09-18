@@ -1,0 +1,59 @@
+name: wildcard-staging
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "triggers/staging.txt"
+      - ".github/workflows/wildcard-staging.yml"
+      - "scripts/issue-wildcard.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanqi-wildcard-staging
+  cancel-in-progress: false
+
+jobs:
+  dns01-staging:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      ROOT_DOMAIN: 37psychology.cn
+      ACME_SERVER: https://acme-staging-v02.api.letsencrypt.org/directory
+      ACME_COMMIT: 3661fd86b6304115e42f43910e6dd452ab9866d6
+      Tencent_SecretId: ${{ secrets.TENCENT_SECRET_ID }}
+      Tencent_SecretKey: ${{ secrets.TENCENT_SECRET_KEY }}
+
+    steps:
+      - name: Checkout pinned workflow source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Check Repository Secrets
+        id: secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$Tencent_SecretId" && -n "$Tencent_SecretKey" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "DNSPod secrets are configured."
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Staging runner is ready. Configure TENCENT_SECRET_ID and TENCENT_SECRET_KEY in Repository Secrets before the real DNS-01 test."
+          fi
+
+      - name: Issue Let's Encrypt staging wildcard certificate
+        if: steps.secrets.outputs.ready == 'true'
+        shell: bash
+        run: |
+          chmod +x scripts/issue-wildcard.sh
+          scripts/issue-wildcard.sh
+
+      - name: Clean ephemeral ACME material
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP:-/tmp}/sanqi-tls-runner"
+          echo "No certificate or private-key artifact is retained."

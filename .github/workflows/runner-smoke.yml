@@ -25,7 +25,8 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/issue-wildcard.sh
-          bash -n server/bootstrap-restricted-deploy.sh
+          bash -n server/install-receiver.sh
+          bash -n server/install-encrypted-package.sh
 
       - name: Confirm GitHub-hosted runner
         shell: bash

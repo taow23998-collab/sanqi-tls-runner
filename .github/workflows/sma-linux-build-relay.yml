@@ -55,7 +55,35 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${SMA_SHA}"
-          node --test scripts/pwa.test.js
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest=json.loads(Path("internal/hub/web/manifest.webmanifest").read_text(encoding="utf-8"))
+          assert manifest["name"] == "三七驻校助手"
+          assert manifest["display"] == "standalone"
+          assert manifest["start_url"] == "/"
+          assert manifest["scope"] == "/"
+          sizes={x["sizes"] for x in manifest["icons"]}
+          assert {"192x192","512x512"} <= sizes
+          assert any(x.get("purpose") == "maskable" for x in manifest["icons"])
+
+          sw=Path("internal/hub/web/sw.js").read_text(encoding="utf-8")
+          assert "url.pathname.startsWith('/api/')" in sw
+          assert "request.mode==='navigate'" in sw
+          static=sw.split("const STATIC_ASSETS=[",1)[1].split("];",1)[0]
+          assert "/api/" not in static
+          assert "'/'" not in static and '"/"' not in static
+
+          app=Path("internal/hub/app.go").read_text(encoding="utf-8")
+          assert 'Cache-Control","no-store, private"' in app
+          assert 'r.URL.Path=="/sw.js"' in app
+          assert 'no-cache, no-store, must-revalidate' in app
+          assert 'application/manifest+json' in app
+          print("PWA_PRIVACY_BOUNDARY=PASS")
+          PY
+
           go test ./...
 
       - name: Build Linux AMD64 binary

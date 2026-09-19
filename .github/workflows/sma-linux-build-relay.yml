@@ -1,0 +1,91 @@
+name: sma-linux-build-relay
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sma-linux-build-relay.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sma-linux-build-relay
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      SMA_REPOSITORY: taow23998-collab/sanqi-mini-assistant
+      SMA_SHA: 2c9270b655bb639f18baa214655e576683974619
+
+    steps:
+      - name: Require private repository read token
+        shell: bash
+        env:
+          SMA_REPO_READ_TOKEN: ${{ secrets.SMA_REPO_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SMA_REPO_READ_TOKEN}" ]]; then
+            echo "SMA_REPO_READ_TOKEN is not configured." >&2
+            exit 2
+          fi
+
+      - name: Checkout exact SMA main commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ env.SMA_REPOSITORY }}
+          ref: ${{ env.SMA_SHA }}
+          token: ${{ secrets.SMA_REPO_READ_TOKEN }}
+          persist-credentials: false
+          path: sma
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: sma/go.mod
+          cache-dependency-path: sma/go.sum
+
+      - name: Validate exact commit and PWA privacy boundary
+        shell: bash
+        working-directory: sma
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${SMA_SHA}"
+          node --test scripts/pwa.test.js
+          go test ./...
+
+      - name: Build Linux AMD64 binary
+        shell: bash
+        working-directory: sma
+        run: |
+          set -euo pipefail
+          mkdir -p ../out
+          VERSION="git-${SMA_SHA}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath \
+            -ldflags="-s -w -X github.com/taow23998-collab/sanqi-mini-assistant/internal/hub.Version=${VERSION}" \
+            -o ../out/sanqi-hub-linux-amd64 ./cmd/sanqi-hub
+          chmod 0755 ../out/sanqi-hub-linux-amd64
+          test "$(../out/sanqi-hub-linux-amd64 --version)" = "${VERSION}"
+          (cd ../out && sha256sum sanqi-hub-linux-amd64 > sanqi-hub-linux-amd64.sha256)
+          printf '%s\n' "${VERSION}" > ../out/VERSION.txt
+          cat > ../out/INSTALL.txt <<EOF
+          Exact SMA commit: ${SMA_SHA}
+          Version: ${VERSION}
+
+          This artifact contains only the Linux AMD64 SMA executable, checksum,
+          version marker, and this note. It does not contain repository source,
+          GitHub credentials, SMA database, or psychological business data.
+          EOF
+
+      - name: Upload one-day SMA binary artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sma-linux-amd64-2c9270b655bb639f18baa214655e576683974619
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
